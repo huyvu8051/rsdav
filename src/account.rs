@@ -4,7 +4,7 @@ use crate::consts::DavNamespaceShort;
 use crate::error::DavError;
 use crate::request::{propfind, Ctx};
 use crate::types::models::{DavAccount, DavAccountType};
-use crate::util::request_helpers::{ensure_trailing_slash, merge_headers, url_matches};
+use crate::util::request_helpers::{ensure_trailing_slash, merge_headers, url_equals, url_matches};
 use serde_json::{Map, Value};
 use url::Url;
 
@@ -25,31 +25,6 @@ fn get_candidate_root_urls(server_url: &str, discovered_root_url: &str) -> Vec<S
     candidates
 }
 
-fn extract_redirect(status: u16, headers: &std::collections::HashMap<String, String>, endpoint: &Url, well_known_uri: &Url) -> Option<String> {
-    if !(300..400).contains(&status) {
-        return None;
-    }
-    let location = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("location")).map(|(_, v)| v.clone())?;
-    if location.is_empty() {
-        return None;
-    }
-    let has_explicit_scheme = location.split(':').next().map(|s| !s.is_empty() && s.chars().next().unwrap().is_ascii_alphabetic() && s.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))).unwrap_or(false)
-        && location.contains(':');
-    let mut service_url = Url::parse(&location).ok().or_else(|| endpoint.join(&location).ok())?;
-
-    if service_url.host_str() == well_known_uri.host_str() {
-        if let Some(port) = well_known_uri.port() {
-            if service_url.port().is_none() {
-                let _ = service_url.set_port(Some(port));
-            }
-        }
-    }
-    if !has_explicit_scheme {
-        let _ = service_url.set_scheme(endpoint.scheme());
-    }
-    Some(service_url.to_string())
-}
-
 pub async fn service_discovery(account: &DavAccount, ctx: &Ctx) -> Result<String, DavError> {
     let endpoint = Url::parse(&account.server_url).map_err(|e| DavError::msg(e.to_string()))?;
     let account_type_str = match account.account_type {
@@ -59,23 +34,20 @@ pub async fn service_discovery(account: &DavAccount, ctx: &Ctx) -> Result<String
     let mut well_known = endpoint.join(&format!("/.well-known/{account_type_str}")).map_err(|e| DavError::msg(e.to_string()))?;
     let _ = well_known.set_scheme(endpoint.scheme());
 
-    let mut manual_opts = ctx.fetch_options.clone();
-    manual_opts.redirect = Some(web_sys::RequestRedirect::Manual);
-
     let mut content_type = std::collections::HashMap::new();
     content_type.insert("Content-Type".to_string(), "text/xml;charset=UTF-8".to_string());
     let merged = merge_headers(&[&ctx.headers(), &content_type, &ctx.fetch_options.headers]);
     let body = "<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n<d:propfind xmlns:d=\"DAV:\">\n  <d:prop>\n    <d:resourcetype/>\n  </d:prop>\n</d:propfind>";
-    if let Ok((resp, _text)) = ctx.client().send(well_known.as_str(), "PROPFIND", &merged, Some(body), &manual_opts).await {
-        if let Some(redirect) = extract_redirect(resp.status, &resp.headers, &endpoint, &well_known) {
-            return Ok(redirect);
+    if let Ok((resp, _text)) = ctx.client().send(well_known.as_str(), "PROPFIND", &merged, Some(body), &ctx.fetch_options).await {
+        if !url_equals(Some(&resp.url), Some(well_known.as_str())) {
+            return Ok(resp.url);
         }
     }
 
     let get_headers = merge_headers(&[&ctx.headers(), &ctx.fetch_options.headers]);
-    if let Ok((resp, _text)) = ctx.client().send(well_known.as_str(), "GET", &get_headers, None, &manual_opts).await {
-        if let Some(redirect) = extract_redirect(resp.status, &resp.headers, &endpoint, &well_known) {
-            return Ok(redirect);
+    if let Ok((resp, _text)) = ctx.client().send(well_known.as_str(), "GET", &get_headers, None, &ctx.fetch_options).await {
+        if !url_equals(Some(&resp.url), Some(well_known.as_str())) {
+            return Ok(resp.url);
         }
     }
 
