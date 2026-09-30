@@ -1,0 +1,17 @@
+[package]
+name = "rsdav"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-trait = "0.1.92"
+base64 = "0.23.1"
+js-sys = "0.3.106"
+quick-xml = "0.42.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+thiserror = "2.0.21"
+url = "2.5.8"
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4.79"
+web-sys = { version = "0.3.106", features = ["Headers", "RequestCredentials", "RequestRedirect", "RequestMode", "Request", "RequestInit", "Response", "Window"] }
